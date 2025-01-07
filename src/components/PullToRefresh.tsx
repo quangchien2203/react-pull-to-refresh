@@ -2,11 +2,21 @@ import * as React from 'react';
 import { DIRECTION, isTreeScrollable } from '../isScrollable';
 
 export interface PullToRefreshProps {
+  // Pull down props
   pullDownContent: JSX.Element;
   releaseContent: JSX.Element;
   refreshContent: JSX.Element;
   pullDownThreshold: number;
   onRefresh: () => Promise<any>;
+
+  // Pull up props
+  pullUpContent?: JSX.Element;
+  pullUpReleaseContent?: JSX.Element;
+  pullUpRefreshContent?: JSX.Element;
+  pullUpThreshold?: number;
+  onPullUp?: () => Promise<any>;
+
+  // Common props
   triggerHeight?: number | 'auto';
   backgroundColor?: string;
   containerStyle?: React.CSSProperties;
@@ -16,8 +26,11 @@ export interface PullToRefreshProps {
 
 export interface PullToRefreshState {
   pullToRefreshThresholdBreached: boolean;
+  pullUpThresholdBreached: boolean;
   maxPullDownDistance: number;
+  maxPullUpDistance: number;
   onRefreshing: boolean;
+  onPullUpRefreshing: boolean;
 }
 
 export class PullToRefresh extends React.Component<
@@ -25,12 +38,38 @@ export class PullToRefresh extends React.Component<
   PullToRefreshState
 > {
   private container: any;
+  private pullDown: any;
+  private pullUp: any;
+
+  private dragging = false;
+  private startY = 0;
+  private currentY = 0;
+  private scrollTop = 0;
+  private scrollHeight = 0;
+  private clientHeight = 0;
+
+  constructor(props: Readonly<PullToRefreshProps>) {
+    super(props);
+    this.state = {
+      pullToRefreshThresholdBreached: false,
+      pullUpThresholdBreached: false,
+      maxPullDownDistance: 0,
+      maxPullUpDistance: 0,
+      onRefreshing: false,
+      onPullUpRefreshing: false,
+    };
+
+    this.containerRef = this.containerRef.bind(this);
+    this.pullDownRef = this.pullDownRef.bind(this);
+    this.pullUpRef = this.pullUpRef.bind(this);
+    this.onTouchStart = this.onTouchStart.bind(this);
+    this.onTouchMove = this.onTouchMove.bind(this);
+    this.onEnd = this.onEnd.bind(this);
+  }
 
   private containerRef(container) {
     this.container = container;
   }
-
-  private pullDown: any;
 
   private pullDownRef(pullDown) {
     this.pullDown = pullDown;
@@ -43,23 +82,15 @@ export class PullToRefresh extends React.Component<
     this.setState({ maxPullDownDistance });
   }
 
-  private dragging = false;
-  private startY = 0;
-  private currentY = 0;
-
-  constructor(props: Readonly<PullToRefreshProps>) {
-    super(props);
-    this.state = {
-      pullToRefreshThresholdBreached: false,
-      maxPullDownDistance: 0,
-      onRefreshing: false,
-    };
-
-    this.containerRef = this.containerRef.bind(this);
-    this.pullDownRef = this.pullDownRef.bind(this);
-    this.onTouchStart = this.onTouchStart.bind(this);
-    this.onTouchMove = this.onTouchMove.bind(this);
-    this.onEnd = this.onEnd.bind(this);
+  private pullUpRef(pullUp) {
+    this.pullUp = pullUp;
+    const maxPullUpDistance =
+      this.pullUp &&
+      this.pullUp.firstChild &&
+      this.pullUp.firstChild['getBoundingClientRect']
+        ? this.pullUp.firstChild['getBoundingClientRect']().height
+        : 0;
+    this.setState({ maxPullUpDistance });
   }
 
   public componentDidMount(): void {
@@ -72,7 +103,7 @@ export class PullToRefresh extends React.Component<
     this.container.addEventListener('touchend', this.onEnd);
     this.container.addEventListener('mousedown', this.onTouchStart);
     this.container.addEventListener('mousemove', this.onTouchMove);
-    this.container.addEventListener('mouseup', this.onTouchEnd);
+    this.container.addEventListener('mouseup', this.onEnd);
   }
 
   public componentWillUnmount(): void {
@@ -85,36 +116,38 @@ export class PullToRefresh extends React.Component<
     this.container.removeEventListener('touchend', this.onEnd);
     this.container.removeEventListener('mousedown', this.onTouchStart);
     this.container.removeEventListener('mousemove', this.onTouchMove);
-    this.container.removeEventListener('mouseup', this.onTouchEnd);
+    this.container.removeEventListener('mouseup', this.onEnd);
   }
 
   private onTouchStart(e) {
-    const { triggerHeight = 200 } = this.props;
+    const { triggerHeight = 1000 } = this.props;
     this.startY = e['pageY'] || e.touches[0].pageY;
     this.currentY = this.startY;
 
+    if (this.container) {
+      this.scrollTop = this.container.scrollTop;
+      this.scrollHeight = this.container.scrollHeight;
+      this.clientHeight = this.container.clientHeight;
+    }
+
     if (triggerHeight === 'auto') {
       const target = e.target;
-
       const container = this.container;
+
       if (!container) {
         return;
       }
 
-      // an element we're touching can be scrolled up, so gesture is going to be a scroll gesture
       if (e.type === 'touchstart' && isTreeScrollable(target, DIRECTION.up)) {
         return;
       }
 
-      // even though we're not scrolling, the pull-to-refresh isn't visible to the user so cancel
-      if (container.getBoundingClientRect().top < 0) {
+      const rect = container.getBoundingClientRect();
+      if (rect.top < 0 && rect.bottom > window.innerHeight) {
         return;
       }
     } else {
-      const top =
-        this.container.getBoundingClientRect().top ||
-        this.container.getBoundingClientRect().y ||
-        0;
+      const top = this.container.getBoundingClientRect().top || 0;
       if (this.startY - top > triggerHeight) {
         return;
       }
@@ -122,97 +155,77 @@ export class PullToRefresh extends React.Component<
 
     this.dragging = true;
     this.container.style.transition = 'transform 0.2s cubic-bezier(0,0,0.31,1)';
-    this.pullDown.style.transition = 'transform 0.2s cubic-bezier(0,0,0.31,1)';
-  }
-
-  private onTouchEnd(e) {
-    const { triggerHeight = 200 } = this.props;
-    this.startY = e['pageY'] || e.touches[0].pageY;
-    this.currentY = this.startY;
-
-    if (triggerHeight === 'auto') {
-      const target = e.target;
-
-      const container = this.container;
-      if (!container) {
-        return;
-      }
-
-      // an element we're touching can be scrolled up, so gesture is going to be a scroll gesture
-      if (e.type === 'mouseup' && isTreeScrollable(target, DIRECTION.up)) {
-        return;
-      }
-
-      // even though we're not scrolling, the pull-to-refresh isn't visible to the user so cancel
-      if (container.getBoundingClientRect().bottom < 0) {
-        return;
-      }
-    } else {
-      const bottom =
-        this.container.getBoundingClientRect().bottom ||
-        this.container.getBoundingClientRect().y ||
-        0;
-      if (this.startY - bottom > triggerHeight) {
-        return;
-      }
+    if (this.pullDown) {
+      this.pullDown.style.transition =
+        'transform 0.2s cubic-bezier(0,0,0.31,1)';
     }
-
-    this.dragging = true;
-    this.container.style.transition = 'transform 0.2s cubic-bezier(0,0,0.31,1)';
-    this.pullDown.style.transition = 'transform 0.2s cubic-bezier(0,0,0.31,1)';
+    if (this.pullUp) {
+      this.pullUp.style.transition = 'transform 0.2s cubic-bezier(0,0,0.31,1)';
+    }
   }
 
   private onTouchMove(e) {
-    if (!this.dragging) {
-      return;
-    }
+    if (!this.dragging) return;
 
     this.currentY = e['pageY'] || e.touches[0].pageY;
-    if (this.currentY < this.startY) {
-      return;
-    }
+    const deltaY = this.currentY - this.startY;
 
     if (e.cancelable) {
       e.preventDefault();
     }
 
-    if (this.currentY - this.startY >= this.props.pullDownThreshold) {
-      this.setState({
-        pullToRefreshThresholdBreached: true,
-      });
+    // Pulling down
+    if (deltaY > 0 && this.scrollTop <= 0) {
+      if (deltaY >= this.props.pullDownThreshold) {
+        this.setState({ pullToRefreshThresholdBreached: true });
+      }
+
+      if (deltaY <= this.state.maxPullDownDistance) {
+        this.container.style.overflow = 'visible';
+        this.container.style.transform = `translate(0px, ${deltaY}px)`;
+        if (this.pullDown) {
+          this.pullDown.style.visibility = 'visible';
+        }
+      }
     }
 
-    if (this.currentY - this.startY > this.state.maxPullDownDistance) {
-      return;
-    }
+    // Pulling up
+    if (
+      deltaY < 0 &&
+      this.props.onPullUp &&
+      this.scrollTop + this.clientHeight >= this.scrollHeight
+    ) {
+      const pullUpDelta = Math.abs(deltaY);
+      const pullUpThreshold =
+        this.props.pullUpThreshold || this.props.pullDownThreshold;
 
-    this.container.style.overflow = 'visible';
-    this.container.style.transform = `translate(0px, ${
-      this.currentY - this.startY
-    }px)`;
-    this.pullDown.style.visibility = 'visible';
+      if (pullUpDelta >= pullUpThreshold) {
+        this.setState({ pullUpThresholdBreached: true });
+      }
+
+      if (pullUpDelta <= this.state.maxPullUpDistance) {
+        this.container.style.overflow = 'visible';
+        this.container.style.transform = `translate(0px, ${deltaY}px)`;
+        if (this.pullUp) {
+          this.pullUp.style.visibility = 'visible';
+        }
+      }
+    }
   }
 
   private onEnd() {
+    if (!this.dragging) return;
+
     this.dragging = false;
+    const deltaY = this.currentY - this.startY;
     this.startY = 0;
     this.currentY = 0;
 
-    if (!this.state.pullToRefreshThresholdBreached) {
-      this.pullDown.style.visibility = this.props.startInvisible
-        ? 'hidden'
-        : 'visible';
-      this.initContainer();
-      return;
-    }
-
-    this.container.style.overflow = 'visible';
-    this.container.style.transform = `translate(0px, ${this.props.pullDownThreshold}px)`;
-    this.setState(
-      {
-        onRefreshing: true,
-      },
-      () => {
+    // Handle pull down refresh
+    if (deltaY > 0 && this.state.pullToRefreshThresholdBreached) {
+      this.container.style.overflow = 'visible';
+      this.container.style.transform = `translate(0px, ${this.props.pullDownThreshold}px)`;
+      this.setState({ onRefreshing: true }, () => {
         this.props.onRefresh().then(() => {
           this.initContainer();
           setTimeout(() => {
@@ -222,8 +235,46 @@ export class PullToRefresh extends React.Component<
             });
           }, 200);
         });
-      }
-    );
+      });
+      return;
+    }
+
+    // Handle pull up load more
+    if (
+      deltaY < 0 &&
+      this.state.pullUpThresholdBreached &&
+      this.props.onPullUp
+    ) {
+      const pullUpThreshold =
+        this.props.pullUpThreshold || this.props.pullDownThreshold;
+      this.container.style.overflow = 'visible';
+      this.container.style.transform = `translate(0px, -${pullUpThreshold}px)`;
+      this.setState({ onPullUpRefreshing: true }, () => {
+        this.props.onPullUp().then(() => {
+          this.initContainer();
+          setTimeout(() => {
+            this.setState({
+              onPullUpRefreshing: false,
+              pullUpThresholdBreached: false,
+            });
+          }, 200);
+        });
+      });
+      return;
+    }
+
+    // Reset if thresholds not breached
+    if (this.pullDown) {
+      this.pullDown.style.visibility = this.props.startInvisible
+        ? 'hidden'
+        : 'visible';
+    }
+    if (this.pullUp) {
+      this.pullUp.style.visibility = this.props.startInvisible
+        ? 'hidden'
+        : 'visible';
+    }
+    this.initContainer();
   }
 
   private initContainer() {
@@ -239,11 +290,13 @@ export class PullToRefresh extends React.Component<
     const { releaseContent, pullDownContent, refreshContent, startInvisible } =
       this.props;
     const { onRefreshing, pullToRefreshThresholdBreached } = this.state;
+
     const content = onRefreshing
       ? refreshContent
       : pullToRefreshThresholdBreached
       ? releaseContent
       : pullDownContent;
+
     const contentStyle: React.CSSProperties = {
       position: 'absolute',
       overflow: 'hidden',
@@ -252,8 +305,42 @@ export class PullToRefresh extends React.Component<
       top: 0,
       visibility: startInvisible ? 'hidden' : 'visible',
     };
+
     return (
       <div id="ptr-pull-down" style={contentStyle} ref={this.pullDownRef}>
+        {content}
+      </div>
+    );
+  }
+
+  private renderPullUpContent() {
+    const {
+      pullUpContent,
+      pullUpReleaseContent,
+      pullUpRefreshContent,
+      startInvisible,
+    } = this.props;
+    const { onPullUpRefreshing, pullUpThresholdBreached } = this.state;
+
+    if (!pullUpContent) return null;
+
+    const content = onPullUpRefreshing
+      ? pullUpRefreshContent || pullUpContent
+      : pullUpThresholdBreached
+      ? pullUpReleaseContent || pullUpContent
+      : pullUpContent;
+
+    const contentStyle: React.CSSProperties = {
+      position: 'absolute',
+      overflow: 'hidden',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      visibility: startInvisible ? 'hidden' : 'visible',
+    };
+
+    return (
+      <div id="ptr-pull-up" style={contentStyle} ref={this.pullUpRef}>
         {content}
       </div>
     );
@@ -282,6 +369,7 @@ export class PullToRefresh extends React.Component<
     return (
       <div id="ptr-parent" style={containerStyle}>
         {this.renderPullDownContent()}
+        {this.renderPullUpContent()}
         <div id="ptr-container" ref={this.containerRef} style={containerStyle}>
           {this.props.children}
         </div>
