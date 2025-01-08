@@ -224,6 +224,7 @@ export class PullToRefresh extends React.Component<
     // Handle pull down refresh
     if (deltaY > 0 && this.state.pullToRefreshThresholdBreached) {
       this.container.style.overflow = 'visible';
+      this.container.style.transform = `translate(0px, ${this.props.pullDownThreshold}px)`;
       this.setState({ onRefreshing: true }, () => {
         this.props.onRefresh().then(() => {
           this.initContainer();
@@ -244,7 +245,10 @@ export class PullToRefresh extends React.Component<
       this.state.pullUpThresholdBreached &&
       this.props.onPullUp
     ) {
+      const pullUpThreshold =
+        this.props.pullUpThreshold || this.props.pullDownThreshold;
       this.container.style.overflow = 'visible';
+      this.container.style.transform = `translate(0px, -${pullUpThreshold}px)`;
       this.setState({ onPullUpRefreshing: true }, () => {
         this.props.onPullUp().then(() => {
           this.initContainer();
@@ -365,10 +369,10 @@ export class PullToRefresh extends React.Component<
     return (
       <div id="ptr-parent" style={containerStyle}>
         {this.renderPullDownContent()}
+        {this.renderPullUpContent()}
         <div id="ptr-container" ref={this.containerRef} style={containerStyle}>
           {this.props.children}
         </div>
-        {this.renderPullUpContent()}
       </div>
     );
   }
