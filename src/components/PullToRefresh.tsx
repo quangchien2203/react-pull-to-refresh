@@ -31,6 +31,8 @@ export interface PullToRefreshState {
   maxPullUpDistance: number;
   onRefreshing: boolean;
   onPullUpRefreshing: boolean;
+  pullProgress: number;
+  pullDirection: 'up' | 'down' | null;
 }
 
 export class PullToRefresh extends React.Component<
@@ -57,6 +59,8 @@ export class PullToRefresh extends React.Component<
       maxPullUpDistance: 0,
       onRefreshing: false,
       onPullUpRefreshing: false,
+      pullProgress: 0,
+      pullDirection: null,
     };
 
     this.containerRef = this.containerRef.bind(this);
@@ -176,9 +180,13 @@ export class PullToRefresh extends React.Component<
 
     // Pulling down
     if (deltaY > 0 && this.scrollTop <= 0) {
-      if (deltaY >= this.props.pullDownThreshold) {
-        this.setState({ pullToRefreshThresholdBreached: true });
-      }
+      const progress = Math.min(deltaY / this.props.pullDownThreshold, 1);
+
+      this.setState({
+        pullProgress: progress,
+        pullDirection: 'down',
+        pullToRefreshThresholdBreached: deltaY >= this.props.pullDownThreshold,
+      });
 
       if (deltaY <= this.state.maxPullDownDistance) {
         this.container.style.overflow = 'visible';
@@ -198,10 +206,13 @@ export class PullToRefresh extends React.Component<
       const pullUpDelta = Math.abs(deltaY);
       const pullUpThreshold =
         this.props.pullUpThreshold || this.props.pullDownThreshold;
+      const progress = Math.min(pullUpDelta / pullUpThreshold, 1);
 
-      if (pullUpDelta >= pullUpThreshold) {
-        this.setState({ pullUpThresholdBreached: true });
-      }
+      this.setState({
+        pullProgress: progress,
+        pullDirection: 'up',
+        pullUpThresholdBreached: pullUpDelta >= pullUpThreshold,
+      });
 
       if (pullUpDelta <= this.state.maxPullUpDistance) {
         this.container.style.overflow = 'visible';
@@ -220,6 +231,12 @@ export class PullToRefresh extends React.Component<
     const deltaY = this.currentY - this.startY;
     this.startY = 0;
     this.currentY = 0;
+
+    // Reset pull progress
+    this.setState({
+      pullProgress: 0,
+      pullDirection: null,
+    });
 
     // Handle pull down refresh
     if (deltaY > 0 && this.state.pullToRefreshThresholdBreached) {
@@ -280,6 +297,49 @@ export class PullToRefresh extends React.Component<
         this.container.style.transform = 'none';
       }
     });
+  }
+
+  private renderProgressIndicator() {
+    const { pullProgress, pullDirection } = this.state;
+    if (!pullDirection || pullProgress === 0) return null;
+
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          opacity: Math.min(pullProgress * 0.8, 0.8),
+          top: pullDirection === 'down' ? '20px' : 'auto',
+          bottom: pullDirection === 'up' ? '20px' : 'auto',
+          transition: 'opacity 0.2s',
+        }}
+      >
+        {pullDirection === 'down' ? (
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        ) : (
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M18 15l-6-6-6 6" />
+          </svg>
+        )}
+      </div>
+    );
   }
 
   private renderPullDownContent() {
@@ -365,6 +425,7 @@ export class PullToRefresh extends React.Component<
     return (
       <div id="ptr-parent" style={containerStyle}>
         {this.renderPullDownContent()}
+        {this.renderProgressIndicator()}
         <div id="ptr-container" ref={this.containerRef} style={containerStyle}>
           {this.props.children}
         </div>
